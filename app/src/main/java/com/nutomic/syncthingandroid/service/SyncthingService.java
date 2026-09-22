@@ -1,6 +1,7 @@
 package com.nutomic.syncthingandroid.service;
 
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Environment;
@@ -9,6 +10,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
+import androidx.preference.PreferenceManager;
 
 import com.nutomic.syncthingandroid.R;
 import com.nutomic.syncthingandroid.SyncthingApp;
@@ -50,6 +52,19 @@ import net.lingala.zip4j.model.enums.AesKeyStrength;
 public class SyncthingService extends Service {
 
     private static final String TAG = "SyncthingService";
+
+    private static final String ACTION_REMOTE_STATE_CHANGED = ".action.STATE_CHANGED";
+    private static final String EXTRA_REMOTE_MODE = "mode";
+    private static final String EXTRA_REMOTE_RUN_STATE = "run_state";
+
+    private static final String REMOTE_MODE_FOLLOW = "FOLLOW";
+    private static final String REMOTE_MODE_FORCE_START = "FORCE_START";
+    private static final String REMOTE_MODE_FORCE_STOP = "FORCE_STOP";
+
+    private static final String REMOTE_RUN_STATE_STARTING = "STARTING";
+    private static final String REMOTE_RUN_STATE_RUNNING = "RUNNING";
+    private static final String REMOTE_RUN_STATE_STOPPED = "STOPPED";
+    private static final String REMOTE_RUN_STATE_ERROR = "ERROR";
 
     private Boolean ENABLE_VERBOSE_LOG = false;
 
@@ -195,12 +210,27 @@ public class SyncthingService extends Service {
         ERROR,
     }
 
+    private static volatile State sCurrentState = State.DISABLED;
+    private static String sLastBroadcastMode = null;
+    private static String sLastBroadcastRunState = null;
+
     /**
      * Initialize the service with State.DISABLED as {@link RunConditionMonitor} will
      * send an update if we should run the binary after it got instantiated in
      * {@link #onStartCommand}.
      */
     private State mCurrentState = State.DISABLED;
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener mRemoteControlStatePreferenceListener =
+            (sharedPreferences, key) -> {
+                if (Constants.PREF_BTNSTATE_FORCE_START_STOP.equals(key)) {
+                    broadcastRemoteControlState(this);
+                } else if (Constants.PREF_BROADCAST_SERVICE_CONTROL.equals(key)
+                        && sharedPreferences.getBoolean(Constants.PREF_BROADCAST_SERVICE_CONTROL, false)) {
+                    broadcastRemoteControlState(this, true);
+                }
+            };
+
     private ConfigRouter mConfigRouter;
     private ConfigXml mConfig;
     private Thread mSyncthingRunnableThread = null;
@@ -253,6 +283,8 @@ public class SyncthingService extends Service {
         super.onCreate();
         ((SyncthingApp) getApplication()).component().inject(this);
         ENABLE_VERBOSE_LOG = AppPrefs.getPrefVerboseLog(mPreferences);
+        mPreferences.registerOnSharedPreferenceChangeListener(mRemoteControlStatePreferenceListener);
+        sCurrentState = mCurrentState;
         LogV("onCreate");
         mConfigRouter = new ConfigRouter(SyncthingService.this);
         mHandler = new Handler();
@@ -653,6 +685,9 @@ public class SyncthingService extends Service {
     @Override
     public void onDestroy() {
         Log.d(TAG, "onDestroy");
+        if (mPreferences != null) {
+            mPreferences.unregisterOnSharedPreferenceChangeListener(mRemoteControlStatePreferenceListener);
+        }
         if (mRunConditionMonitor != null) {
             /**
              * Shut down the OnShouldRunChangedListener so we won't get interrupted by run
@@ -779,6 +814,8 @@ public class SyncthingService extends Service {
         }
         Log.i(TAG, "onServiceStateChange: from " + mCurrentState + " to " + newState);
         mCurrentState = newState;
+        sCurrentState = newState;
+        broadcastRemoteControlState(this);
         mHandler.post(() -> {
             mNotificationHandler.updatePersistentNotification(this);
             Iterator<OnServiceStateChangeListener> it = mOnServiceStateChangeListeners.iterator();
@@ -791,6 +828,67 @@ public class SyncthingService extends Service {
                 }
             }
         });
+    }
+
+    public static void broadcastRemoteControlState(Context context) {
+        broadcastRemoteControlState(context, false);
+    }
+
+    public static synchronized void broadcastRemoteControlState(Context context, boolean force) {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
+
+        if (!preferences.getBoolean(Constants.PREF_BROADCAST_SERVICE_CONTROL, false)) {
+            return;
+        }
+
+        String mode;
+        switch (preferences.getInt(
+                Constants.PREF_BTNSTATE_FORCE_START_STOP,
+                Constants.BTNSTATE_NO_FORCE_START_STOP
+        )) {
+            case Constants.BTNSTATE_FORCE_START:
+                mode = REMOTE_MODE_FORCE_START;
+                break;
+            case Constants.BTNSTATE_FORCE_STOP:
+                mode = REMOTE_MODE_FORCE_STOP;
+                break;
+            case Constants.BTNSTATE_NO_FORCE_START_STOP:
+            default:
+                mode = REMOTE_MODE_FOLLOW;
+                break;
+        }
+
+        String runState;
+        switch (sCurrentState) {
+            case INIT:
+            case STARTING:
+                runState = REMOTE_RUN_STATE_STARTING;
+                break;
+            case ACTIVE:
+                runState = REMOTE_RUN_STATE_RUNNING;
+                break;
+            case ERROR:
+                runState = REMOTE_RUN_STATE_ERROR;
+                break;
+            case DISABLED:
+            default:
+                runState = REMOTE_RUN_STATE_STOPPED;
+                break;
+        }
+
+        if (!force
+                && mode.equals(sLastBroadcastMode)
+                && runState.equals(sLastBroadcastRunState)) {
+            return;
+        }
+
+        Intent intent = new Intent(context.getPackageName() + ACTION_REMOTE_STATE_CHANGED);
+        intent.putExtra(EXTRA_REMOTE_MODE, mode);
+        intent.putExtra(EXTRA_REMOTE_RUN_STATE, runState);
+        context.sendBroadcast(intent);
+
+        sLastBroadcastMode = mode;
+        sLastBroadcastRunState = runState;
     }
 
     public State getCurrentState() {

@@ -16,6 +16,20 @@ The following intent actions are available:
 * Force Stop Syncthing
 `adb shell am broadcast -a ${applicationId}.action.STOP -p ${applicationId}`
 
+* Request current service state
+`adb shell am broadcast -a ${applicationId}.action.REQUEST_STATE -p ${applicationId}`
+
+When remote control by broadcast is enabled, Syncthing broadcasts its current control mode and runtime state using:
+
+`${applicationId}.action.STATE_CHANGED`
+
+The broadcast contains the following string extras:
+
+* `mode`: `FOLLOW`, `FORCE_START` or `FORCE_STOP`
+* `run_state`: `STARTING`, `RUNNING`, `STOPPED` or `ERROR`
+
+`STATE_CHANGED` is sent when either the control mode or runtime state changes. Sending `REQUEST_STATE` broadcasts the current state even if it has not changed.
+
 The intents should be set to 'broadcast' rather than starting an activity of service. Note that some apps, e.g. **Llama**, are sensitive to trailing spaces so be careful not to leave any when entering the action.
 
 Tasker example action to start Syncthing:
