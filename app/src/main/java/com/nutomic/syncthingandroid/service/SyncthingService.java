@@ -56,6 +56,7 @@ public class SyncthingService extends Service {
     private static final String ACTION_REMOTE_STATE_CHANGED = ".action.STATE_CHANGED";
     private static final String EXTRA_REMOTE_MODE = "mode";
     private static final String EXTRA_REMOTE_RUN_STATE = "run_state";
+    private static final String EXTRA_REMOTE_SYNC_STATE = "sync_state";
 
     private static final String REMOTE_MODE_FOLLOW = "FOLLOW";
     private static final String REMOTE_MODE_FORCE_START = "FORCE_START";
@@ -65,6 +66,8 @@ public class SyncthingService extends Service {
     private static final String REMOTE_RUN_STATE_RUNNING = "RUNNING";
     private static final String REMOTE_RUN_STATE_STOPPED = "STOPPED";
     private static final String REMOTE_RUN_STATE_ERROR = "ERROR";
+
+    private static final String REMOTE_SYNC_STATE_UNKNOWN = "UNKNOWN";
 
     private Boolean ENABLE_VERBOSE_LOG = false;
 
@@ -211,8 +214,10 @@ public class SyncthingService extends Service {
     }
 
     private static volatile State sCurrentState = State.DISABLED;
+    private static volatile String sCurrentSyncState = REMOTE_SYNC_STATE_UNKNOWN;
     private static String sLastBroadcastMode = null;
     private static String sLastBroadcastRunState = null;
+    private static String sLastBroadcastSyncState = null;
 
     /**
      * Initialize the service with State.DISABLED as {@link RunConditionMonitor} will
@@ -601,7 +606,9 @@ public class SyncthingService extends Service {
 
         if (mRestApi == null) {
             mRestApi = new RestApi(this, mConfig.getWebGuiUrl(), mConfig.getApiKey(),
-                    this::onApiAvailable, () -> onServiceStateChange(mCurrentState));
+                    this::onApiAvailable,
+                    () -> onServiceStateChange(mCurrentState),
+                    this::onSyncStateChange);
             Log.i(TAG, "Web GUI will be available at " + mConfig.getWebGuiUrl());
         }
 
@@ -815,6 +822,11 @@ public class SyncthingService extends Service {
         Log.i(TAG, "onServiceStateChange: from " + mCurrentState + " to " + newState);
         mCurrentState = newState;
         sCurrentState = newState;
+
+        if (newState != State.ACTIVE) {
+            sCurrentSyncState = REMOTE_SYNC_STATE_UNKNOWN;
+        }
+
         broadcastRemoteControlState(this);
         mHandler.post(() -> {
             mNotificationHandler.updatePersistentNotification(this);
@@ -828,6 +840,17 @@ public class SyncthingService extends Service {
                 }
             }
         });
+    }
+
+    private void onSyncStateChange(RestApi.SyncState syncState) {
+        String newSyncState = syncState.name();
+
+        if (newSyncState.equals(sCurrentSyncState)) {
+            return;
+        }
+
+        sCurrentSyncState = newSyncState;
+        broadcastRemoteControlState(this);
     }
 
     public static void broadcastRemoteControlState(Context context) {
@@ -876,19 +899,26 @@ public class SyncthingService extends Service {
                 break;
         }
 
+        String syncState = runState.equals(REMOTE_RUN_STATE_RUNNING)
+                ? sCurrentSyncState
+                : REMOTE_SYNC_STATE_UNKNOWN;
+
         if (!force
                 && mode.equals(sLastBroadcastMode)
-                && runState.equals(sLastBroadcastRunState)) {
+                && runState.equals(sLastBroadcastRunState)
+                && syncState.equals(sLastBroadcastSyncState)) {
             return;
         }
 
         Intent intent = new Intent(context.getPackageName() + ACTION_REMOTE_STATE_CHANGED);
         intent.putExtra(EXTRA_REMOTE_MODE, mode);
         intent.putExtra(EXTRA_REMOTE_RUN_STATE, runState);
+        intent.putExtra(EXTRA_REMOTE_SYNC_STATE, syncState);
         context.sendBroadcast(intent);
 
         sLastBroadcastMode = mode;
         sLastBroadcastRunState = runState;
+        sLastBroadcastSyncState = syncState;
     }
 
     public State getCurrentState() {

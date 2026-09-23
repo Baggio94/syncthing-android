@@ -27,8 +27,11 @@ The broadcast contains the following string extras:
 
 * `mode`: `FOLLOW`, `FORCE_START` or `FORCE_STOP`
 * `run_state`: `STARTING`, `RUNNING`, `STOPPED` or `ERROR`
+* `sync_state`: `UNKNOWN`, `SYNCING` or `SYNCED`
 
-`STATE_CHANGED` is sent when either the control mode or runtime state changes. Sending `REQUEST_STATE` broadcasts the current state even if it has not changed.
+`SYNCED` is only emitted after the required completion data has been observed from Syncthing, all active local folders are idle and error-free, and the wrapper's combined local/remote completion value has remained at 100% continuously for 10 seconds. Any new synchronization activity cancels the pending stability check immediately and returns the state to `SYNCING`. `UNKNOWN` is used when Syncthing is not running, required completion data has not been initialized, or completion cannot currently be determined reliably. Disconnected devices are not treated as proof that an unreachable peer has independently confirmed synchronization.
+
+`STATE_CHANGED` is sent when the control mode, runtime state or synchronization state changes. Sending `REQUEST_STATE` broadcasts the current state even if it has not changed.
 
 The intents should be set to 'broadcast' rather than starting an activity of service. Note that some apps, e.g. **Llama**, are sensitive to trailing spaces so be careful not to leave any when entering the action.
 
