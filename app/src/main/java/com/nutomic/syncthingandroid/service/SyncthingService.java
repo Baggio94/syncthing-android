@@ -345,7 +345,7 @@ public class SyncthingService extends Service {
                  * use for clean shutdown to take place. Instead, we will immediately shutdown the crashed
                  * instance forcefully.
                  */
-                mCurrentState = State.ERROR;
+                onServiceStateChange(State.ERROR);
                 shutdown(State.DISABLED);
             } else {
                 // Graceful shutdown.
