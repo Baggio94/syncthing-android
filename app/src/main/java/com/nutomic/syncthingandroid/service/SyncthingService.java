@@ -56,6 +56,15 @@ public class SyncthingService extends Service {
     private static final String ACTION_REMOTE_STATE_CHANGED = ".action.STATE_CHANGED";
     private static final String EXTRA_REMOTE_MODE = "mode";
     private static final String EXTRA_REMOTE_RUN_STATE = "run_state";
+    private static final String EXTRA_FOLDERS_IDLE_COUNT = "folders_idle_count";
+    private static final String EXTRA_FOLDERS_SCANNING_COUNT = "folders_scanning_count";
+    private static final String EXTRA_FOLDERS_SYNCING_COUNT = "folders_syncing_count";
+    private static final String EXTRA_FOLDERS_CLEANING_COUNT = "folders_cleaning_count";
+    private static final String EXTRA_FOLDERS_ERRORED_COUNT = "folders_errored_count";
+    private static final String EXTRA_FOLDERS_STARTING_COUNT = "folders_starting_count";
+    private static final String EXTRA_DEVICES_CONNECTED_COUNT = "devices_connected_count";
+    private static final String EXTRA_DEVICES_SYNCING_COUNT = "devices_syncing_count";
+    private static final String EXTRA_DEVICES_PENDING_COUNT = "devices_pending_count";
 
     private static final String REMOTE_MODE_FOLLOW = "FOLLOW";
     private static final String REMOTE_MODE_FORCE_START = "FORCE_START";
@@ -210,9 +219,22 @@ public class SyncthingService extends Service {
         ERROR,
     }
 
+    private static final int SYNC_COUNTER_COUNT = 9;
+    private static final int COUNTER_FOLDERS_IDLE = 0;
+    private static final int COUNTER_FOLDERS_SCANNING = 1;
+    private static final int COUNTER_FOLDERS_SYNCING = 2;
+    private static final int COUNTER_FOLDERS_CLEANING = 3;
+    private static final int COUNTER_FOLDERS_ERRORED = 4;
+    private static final int COUNTER_FOLDERS_STARTING = 5;
+    private static final int COUNTER_DEVICES_CONNECTED = 6;
+    private static final int COUNTER_DEVICES_SYNCING = 7;
+    private static final int COUNTER_DEVICES_PENDING = 8;
+
     private static volatile State sCurrentState = State.DISABLED;
     private static String sLastBroadcastMode = null;
     private static String sLastBroadcastRunState = null;
+    private static int[] sCurrentSyncCounters = new int[SYNC_COUNTER_COUNT];
+    private static int[] sLastBroadcastSyncCounters = null;
 
     /**
      * Initialize the service with State.DISABLED as {@link RunConditionMonitor} will
@@ -285,6 +307,7 @@ public class SyncthingService extends Service {
         ENABLE_VERBOSE_LOG = AppPrefs.getPrefVerboseLog(mPreferences);
         mPreferences.registerOnSharedPreferenceChangeListener(mRemoteControlStatePreferenceListener);
         sCurrentState = mCurrentState;
+        resetRemoteControlSyncCounters();
         LogV("onCreate");
         mConfigRouter = new ConfigRouter(SyncthingService.this);
         mHandler = new Handler();
@@ -815,6 +838,9 @@ public class SyncthingService extends Service {
         Log.i(TAG, "onServiceStateChange: from " + mCurrentState + " to " + newState);
         mCurrentState = newState;
         sCurrentState = newState;
+        if (newState != State.ACTIVE) {
+            resetRemoteControlSyncCounters();
+        }
         broadcastRemoteControlState(this);
         mHandler.post(() -> {
             mNotificationHandler.updatePersistentNotification(this);
@@ -828,6 +854,42 @@ public class SyncthingService extends Service {
                 }
             }
         });
+    }
+
+    private static synchronized void resetRemoteControlSyncCounters() {
+        sCurrentSyncCounters = new int[SYNC_COUNTER_COUNT];
+    }
+
+    public static synchronized void updateRemoteControlSyncCounters(
+            Context context,
+            int foldersIdle,
+            int foldersScanning,
+            int foldersSyncing,
+            int foldersCleaning,
+            int foldersErrored,
+            int foldersStarting,
+            int devicesConnected,
+            int devicesSyncing,
+            int devicesPending
+    ) {
+        int[] next = new int[]{
+                foldersIdle,
+                foldersScanning,
+                foldersSyncing,
+                foldersCleaning,
+                foldersErrored,
+                foldersStarting,
+                devicesConnected,
+                devicesSyncing,
+                devicesPending
+        };
+
+        if (Arrays.equals(next, sCurrentSyncCounters)) {
+            return;
+        }
+
+        sCurrentSyncCounters = next;
+        broadcastRemoteControlState(context);
     }
 
     public static void broadcastRemoteControlState(Context context) {
@@ -878,17 +940,38 @@ public class SyncthingService extends Service {
 
         if (!force
                 && mode.equals(sLastBroadcastMode)
-                && runState.equals(sLastBroadcastRunState)) {
+                && runState.equals(sLastBroadcastRunState)
+                && Arrays.equals(sCurrentSyncCounters, sLastBroadcastSyncCounters)) {
             return;
         }
 
         Intent intent = new Intent(context.getPackageName() + ACTION_REMOTE_STATE_CHANGED);
         intent.putExtra(EXTRA_REMOTE_MODE, mode);
         intent.putExtra(EXTRA_REMOTE_RUN_STATE, runState);
+        intent.putExtra(EXTRA_FOLDERS_IDLE_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_IDLE]);
+        intent.putExtra(EXTRA_FOLDERS_SCANNING_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_SCANNING]);
+        intent.putExtra(EXTRA_FOLDERS_SYNCING_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_SYNCING]);
+        intent.putExtra(EXTRA_FOLDERS_CLEANING_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_CLEANING]);
+        intent.putExtra(EXTRA_FOLDERS_ERRORED_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_ERRORED]);
+        intent.putExtra(EXTRA_FOLDERS_STARTING_COUNT,
+                sCurrentSyncCounters[COUNTER_FOLDERS_STARTING]);
+        intent.putExtra(EXTRA_DEVICES_CONNECTED_COUNT,
+                sCurrentSyncCounters[COUNTER_DEVICES_CONNECTED]);
+        intent.putExtra(EXTRA_DEVICES_SYNCING_COUNT,
+                sCurrentSyncCounters[COUNTER_DEVICES_SYNCING]);
+        intent.putExtra(EXTRA_DEVICES_PENDING_COUNT,
+                sCurrentSyncCounters[COUNTER_DEVICES_PENDING]);
         context.sendBroadcast(intent);
 
         sLastBroadcastMode = mode;
         sLastBroadcastRunState = runState;
+        sLastBroadcastSyncCounters =
+                Arrays.copyOf(sCurrentSyncCounters, sCurrentSyncCounters.length);
     }
 
     public State getCurrentState() {
